@@ -502,8 +502,7 @@ class YOLOv5RandomAffine(BaseTransform):
                  bbox_clip_border: bool = True,
                  min_bbox_size: int = 2,
                  min_area_ratio: float = 0.1,
-                 max_aspect_ratio: int = 20,
-                 poly2mask=True):
+                 max_aspect_ratio: int = 20):
         assert 0 <= max_translate_ratio <= 1
         assert scaling_ratio_range[0] <= scaling_ratio_range[1]
         assert scaling_ratio_range[0] > 0
@@ -518,7 +517,6 @@ class YOLOv5RandomAffine(BaseTransform):
         self.min_bbox_size = min_bbox_size
         self.min_area_ratio = min_area_ratio
         self.max_aspect_ratio = max_aspect_ratio
-        self.poly2mask = poly2mask
 
     @cache_randomness
     def _get_random_homography_matrix(self, height: int,
@@ -646,8 +644,6 @@ class YOLOv5RandomAffine(BaseTransform):
                 valid_index]
             if with_mask:
                 results['gt_masks'] = gt_masks[valid_index]
-                if self.poly2mask:
-                    results['gt_masks'] = results['gt_masks'].to_bitmap()
 
         return results
 
@@ -802,7 +798,75 @@ class Albu(MMDET_Albu):
                     return None
             elif 'masks' in results:
                 results['masks'] = ori_masks.__class__(
-                    results['masks'], results['image'].shape[0],
-                    results['image'].shape[1])
+                    results['masks'], ori_masks.height, ori_masks.width)
 
+        return results
+
+
+@TRANSFORMS.register_module()
+class YOLOv5Polygon2mask(BaseTransform):
+    def __init__(self, mask_ratio: int = 4, overlap: bool = True):
+        self.mask_ratio = mask_ratio
+        self.overlap = overlap
+    
+    def polygon2mask(self, img_shape, polygons, color=1):
+        '''
+        transform from polygon to bitmask
+        '''
+        mask = np.zeros(img_shape[:2], dtype=np.uint8)
+        polygons = np.asarray(polygons)
+        polygons = polygons.astype(np.int32)
+        shape = polygons.shape
+        polygons = polygons.reshape(shape[0], -1, 2)
+        cv2.fillPoly(mask, polygons, color=color)
+        nh, nw = (img_shape[0] // self.mask_ratio, img_shape[1] // self.mask_ratio)
+        # NOTE: fillPoly firstly then resize is trying the keep the same way
+        # of loss calculation when mask-ratio=1.
+        mask = cv2.resize(mask, (nw, nh))
+        return mask
+    
+    def polygon2masks(self, img_shape, polygons, color=1):
+        masks = []
+        for i in range(len(polygons)):
+            mask = self.polygon2mask(img_shape, polygons[i], color)
+            masks.append(mask)
+        return np.array(masks)
+
+    def transform(self, results: dict):
+        img_shape = results['img_shape']
+        polygons = results['gt_masks'].masks
+
+        if self.overlap:
+            combine_mask = np.zeros((img_shape[0] // self.mask_ratio,
+                img_shape[1] // self.mask_ratio), dtype=np.uint8)
+            # transform polygon to masks
+            areas = []
+            masks = []
+            for i in range(len(polygons)):
+                mask = self.polygon2mask(img_shape, polygons[i])
+                masks.append(mask)
+                areas.append(mask.sum())
+            # sort by areas       
+            areas = np.asarray(areas)
+            index = np.argsort(-areas)
+            masks = np.array(masks)[index]
+            # compress into one mask
+            for i in range(len(polygons)):
+                mask = masks[i] * (i + 1)
+                combine_mask = combine_mask + mask
+                combine_mask = np.clip(combine_mask, a_min=0, a_max=i+1)
+            masks = combine_mask[None]
+            # bbox/label sort
+            results['gt_bboxes'] = results['gt_bboxes'][index]
+            results['gt_bboxes_labels'] = results['gt_bboxes_labels'][index]
+            results['gt_ignore_flags'] = results['gt_ignore_flags'][index]
+            results['gt_masks_overlap'] = True
+        else:
+            masks = self.polygon2masks(img_shape, polygons)
+            results['gt_masks_overlap'] = False
+        
+        results['gt_masks'] = BitmapMasks(
+            masks,
+            img_shape[0] // self.mask_ratio,
+            img_shape[1] // self.mask_ratio)
         return results

@@ -142,6 +142,10 @@ train_pipeline = [
         min_area_ratio=0.01,
         max_aspect_ratio=100),
     dict(
+        type='YOLOv5Polygon2mask',
+        mask_ratio=4,
+        overlap=True),
+    dict(
         type='Albu',
         transforms=albu_train_transforms,
         bbox_params=dict(
@@ -156,7 +160,7 @@ train_pipeline = [
     dict(type='YOLOv5HSVRandomAug'),
     dict(type='mmdet.RandomFlip', prob=0.5),
     dict(
-        type='mmdet.PackDetInputs',
+        type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape', 'flip',
                    'flip_direction'))
 ]
