@@ -1,8 +1,14 @@
-_base_ = './yolov5_ins_m-v61_syncbn_fast_8xb16-300e_coco_instance.py'  # noqa
+_base_ = './yolov5_ins_l-v61_syncbn_fast_8xb16-300e_coco_instance.py'  # noqa
 
+# This config use refining bbox and `YOLOv5CopyPaste`.
+# Refining bbox means refining bbox by mask while loading annotations and
+# transforming after `YOLOv5RandomAffine`
+
+# ========================modified parameters======================
 deepen_factor = 1.33
 widen_factor = 1.25
 
+# ===============================Unmodified in most cases====================
 model = dict(
     backbone=dict(
         deepen_factor=deepen_factor,
